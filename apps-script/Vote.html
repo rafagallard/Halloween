@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es"><head><base target="_top"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}html,body{margin:0;background:#111016;color:#f4edcd;font:20px 'Pirata One',Georgia,serif}main{max-width:850px;margin:auto;padding:16px}h1,h2,h3{font-weight:400}h1{font-size:34px;margin:0 0 18px}h2{font-size:28px}p{line-height:1.5}input,button{font:inherit;border:1px solid #605567;border-radius:8px;padding:12px;color:#f4edcd;background:#17131c;max-width:100%}button{cursor:pointer}button:disabled{cursor:default;opacity:.6}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #d9c78e;outline-offset:4px}label{display:block;margin:12px 0}label input{display:block;width:100%;margin-top:6px}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.movie{padding:16px 0;border-bottom:1px solid #39313f;display:flex;align-items:center;gap:14px}.movie .title{flex:1;min-width:0;overflow-wrap:anywhere}.count{min-width:65px;text-align:center}.muted{font-size:17px}.gold{color:#dfc781}#message{min-height:28px;white-space:pre-wrap}#history li{padding:12px 0;border-bottom:1px solid #39313f;overflow-wrap:anywhere}details{margin:20px 0}summary{cursor:pointer}#access-code{font:14px monospace;word-break:break-all;display:block;padding:12px;background:#211b29}#close-form{border:1px solid #514957;border-radius:10px;padding:16px;margin-top:12px}progress{width:100%}[hidden]{display:none!important}@media(max-width:420px){main{padding:12px}.movie{flex-wrap:wrap}.movie .title{flex-basis:70%}}
+</style></head><body><main>
+<h1>Maratón terrorífico</h1>
+<form id="login"><label>Tu nombre de usuario<input id="name" autocomplete="username" minlength="2" maxlength="60" required></label><details><summary>Ya tengo un código de acceso</summary><label>Código de acceso<input id="token-input" type="password" autocomplete="off"></label></details><button type="submit">Entrar a la votación</button></form>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="session" hidden><div class="row"><span id="user-label"></span><button id="refresh" type="button">Actualizar votos</button><button id="logout" type="button">Cambiar usuario</button></div><details><summary>Mi código de acceso</summary><p class="muted">Guárdalo para entrar con el mismo nombre desde otro dispositivo. No lo compartas.</p><code id="access-code"></code></details>
+<h2 id="round-label"></h2><p>Un voto por usuario en cada ronda. Tu voto no se puede cambiar.</p><p id="vote-status" class="gold"></p><div id="movies"></div>
+<details><summary>Cerrar ronda · Organizador</summary><form id="close-form"><p id="winner-preview"></p><label>Clave privada del organizador<input id="admin-key" type="password" autocomplete="off" required></label><button id="close-round" type="submit">Guardar ganadora y abrir siguiente ronda</button></form></details>
+<h2>Histórico del maratón</h2><p class="muted">Las ganadoras quedan bloqueadas y no vuelven a aparecer en la votación.</p><ol id="history"></ol>
+</section></main><script>
+(()=>{
+const $=id=>document.getElementById(id);let state=null,busy=false,credentials={name:'',token:''};
+const key='halloween-voter-v1';
+try{credentials=JSON.parse(localStorage.getItem(key)||'null')||credentials}catch{}
+$('name').value=credentials.name||'';
+function message(t){$('message').textContent=t}
+function remember(){try{localStorage.setItem(key,JSON.stringify(credentials))}catch{message('Conserva tu código de acceso: este navegador no permite guardarlo.')}}
+function call(payload){return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(r=>r&&r.ok?resolve(r):reject(new Error(r?.error||'Respuesta inválida.'))).withFailureHandler(()=>reject(new Error('No se pudo conectar. Actualiza para comprobar si se registró la operación.'))).api(payload))}
+async function run(action,extra={}){
+ if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);message('Conectando…');
+ try{const result=await call({action,...credentials,...extra});if(result.token)credentials.token=result.token;state=result;remember();render();message('Datos actualizados.');}
+ catch(e){message(e.message)}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);if(state)render()}
+}
+function render(){
+ $('login').hidden=true;$('session').hidden=false;$('user-label').textContent='Usuario: '+state.user;$('access-code').textContent=credentials.token;$('round-label').textContent='Ronda '+state.round;
+ $('vote-status').textContent=state.votedMovieId?'Tu voto quedó registrado y bloqueado.':state.tied?'Hay empate en el primer lugar.':state.movies.length?'Elige la próxima película.':'No hay películas disponibles. El organizador debe añadir títulos en Peliculas.';
+ $('movies').replaceChildren();state.movies.forEach((m,i)=>{const row=document.createElement('div');row.className='movie';const title=document.createElement('span');title.className='title';title.textContent=(i+1)+'. '+m.title;const count=document.createElement('span');count.className='count';count.textContent=m.votes+' votos';const button=document.createElement('button');button.type='button';button.textContent=state.votedMovieId===m.id?'Voto registrado':'Votar';button.disabled=busy||Boolean(state.votedMovieId);button.addEventListener('click',()=>run('vote',{round:state.round,movieId:m.id}));row.append(title,count,button);$('movies').append(row)});
+ const leader=state.movies.find(m=>m.id===state.leaderId);$('winner-preview').textContent=leader?'Ganadora provisional: '+leader.title+' · '+leader.votes+' votos':state.tied?'Empate: no se puede cerrar todavía.':'Se necesita al menos un voto y una ganadora única.';$('close-round').disabled=busy||!leader;
+ $('history').replaceChildren();state.history.forEach(h=>{const li=document.createElement('li');li.textContent='Ronda '+h.round+' · '+h.title+' · '+h.votes+' votos · Bloqueada';$('history').append(li)});if(!state.history.length){const li=document.createElement('li');li.textContent='Todavía no hay rondas cerradas.';$('history').append(li)}
+}
+$('login').addEventListener('submit',e=>{e.preventDefault();const name=$('name').value.trim();credentials={name,token:$('token-input').value.trim()||(name===credentials.name?credentials.token:'')};run('login')});
+$('refresh').addEventListener('click',()=>run('state'));
+$('logout').addEventListener('click',()=>{if(busy)return;state=null;$('session').hidden=true;$('login').hidden=false;message('Escribe el nombre del siguiente usuario. Conserva tu código antes de cambiar de usuario.');$('name').value='';$('token-input').value=''});
+$('close-form').addEventListener('submit',e=>{e.preventDefault();if(!state?.leaderId||busy)return;const leader=state.movies.find(m=>m.id===state.leaderId);if(!confirm('Guardar '+leader.title+' como ganadora y excluirla de las siguientes rondas?'))return;const adminKey=$('admin-key').value;$('admin-key').value='';run('close',{round:state.round,movieId:state.leaderId,adminKey})});
+setInterval(()=>{if(state&&!busy&&!document.hidden)run('state')},20000);
+if(credentials.name&&credentials.token)run('state');
+})();
+</script></body></html>
